@@ -1,0 +1,23 @@
+{
+  "name": "@alethio/cms-plugin-tool",
+  "version": "1.0.0-beta.0",
+  "description": "CLI tool for managing Alethio CMS plugins",
+  "main": "index.js",
+  "bin": {
+    "acp": "bin/acp"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Alexandru Ciuca <alexandru.ciuca@consensys.net>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Alethio/cms-plugin-tool"
+  },
+  "dependencies": {
+    "fs-extra": "^8.0.1",
+    "pacote": "^9.5.0",
+    "validate-npm-package-name": "^3.0.0"
+  }
+}
