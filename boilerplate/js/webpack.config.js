@@ -65,6 +65,11 @@ function getConfig(isProduction) {
             rules: [
                 {
                     test: /\.jsx?$/,
+                    exclude: /node_modules/,
+                    loader: "babel-loader"
+                },
+                {
+                    test: /\.jsx?$/,
                     enforce: "pre",
                     loader: "source-map-loader"
                 }
@@ -75,7 +80,7 @@ function getConfig(isProduction) {
                 sourceRoot,
                 nodeModulesPath
             ],
-            extensions: ['.webpack.js', '.web.js', '.js']
+            extensions: ['.webpack.js', '.web.js', '.js', '.jsx']
         },
         externals: [
             { "react": "commonjs react" },

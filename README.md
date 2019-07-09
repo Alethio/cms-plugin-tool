@@ -21,3 +21,8 @@ Create a blank folder and switch to it. Run the following:
 or, if you prefer vanilla JavaScript instead of TypeScript:
 
 `$ acp init --js <plugin_npm_package_name> <publisher> <pluginName>`
+
+Finally, install the plugin dependencies and build it:
+
+`$ npm install`
+`$ npm run watch` for development or `$ npm run build` for minified build.
