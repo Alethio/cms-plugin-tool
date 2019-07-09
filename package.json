@@ -1,6 +1,6 @@
 {
   "name": "@alethio/cms-plugin-tool",
-  "version": "1.0.0-beta.0",
+  "version": "1.0.0-beta.1",
   "description": "CLI tool for managing Alethio CMS plugins",
   "main": "index.js",
   "bin": {
