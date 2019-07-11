@@ -98,14 +98,14 @@ function createBoilerplate(
     fs.writeFileSync(
         packageJsonPath,
         fs.readFileSync(packageJsonPath, { encoding: "utf-8"})
-            .replace("<package_name>", npmPackageName)
-            .replace("<publisher>", publisher)
-            .replace("<plugin_name>", pluginName)
+            .replace(/<package_name>/g, npmPackageName)
+            .replace(/<publisher>/g, publisher)
+            .replace(/<plugin_name>/g, pluginName)
     );
     fs.writeFileSync(
         webpackConfigPath,
         fs.readFileSync(webpackConfigPath, { encoding: "utf-8" })
-            .replace("<library_name>", pluginLibraryName)
+            .replace(/<library_name>/g, pluginLibraryName)
     );
 
 }
@@ -114,8 +114,10 @@ async function installPlugin(
     /** @type string */ targetDir, /** @type string */ pluginArg, /** @type string */ tmpDir,
     devMode = false
 ) {
+    let pacoteOpts = { cache: path.join(tmpDir, "pacote-cache") };
+
     // Resolve plugin name from spec
-    let { name } = await pacote.manifest(pluginArg);
+    let { name } = await pacote.manifest(pluginArg, pacoteOpts);
     if (!name) {
         process.stderr.write(`Could not resolve plugin manifest for spec "${pluginArg}"\n`);
         process.exit(-1);
@@ -123,7 +125,7 @@ async function installPlugin(
 
     // Extract plugin to a temporary folder
     let pluginTmpPath = path.join(tmpDir, name.replace(/\//g, path.sep));
-    await pacote.extract(pluginArg, pluginTmpPath);
+    await pacote.extract(pluginArg, pluginTmpPath, pacoteOpts);
 
     // Get plugin manifest
     let { publisher, distDir, mainJsFilename, pluginName, version } = readPluginManifest(pluginTmpPath);
