@@ -2,8 +2,10 @@
 const fs = require("fs-extra");
 const path = require("path");
 const os = require("os");
+const child_process = require("child_process");
 const pacote = require("pacote");
 const validateNpmPackageName = require("validate-npm-package-name");
+const tar = require("tar");
 
 (async () => {
     let [, , cmd, ...args] = process.argv;
@@ -44,7 +46,7 @@ const validateNpmPackageName = require("validate-npm-package-name");
             }
         } else if (cmd === "link") {
             for (let pluginPath of pluginPaths) {
-                await linkPlugin(targetDir, pluginPath);
+                await linkPlugin(targetDir, path.resolve(pluginPath));
             }
         }
     } else if (cmd === "init") {
@@ -114,9 +116,24 @@ async function installPlugin(
     /** @type string */ targetDir, /** @type string */ pluginArg, /** @type string */ tmpDir,
     devMode = false
 ) {
-    let pacoteOpts = { cache: path.join(tmpDir, "pacote-cache") };
+    let pacoteCacheDir = path.join(tmpDir, "pacote-cache");
+    let pacoteOpts = {
+        cache: pacoteCacheDir,
+        // The default dirPacker strips .npmignore'd files, which we don't want to do if installing from git/file,
+        // because we will build the plugin locally.
+        // See https://github.com/npm/pacote/blob/latest/lib/util/pack-dir.js#L35
+        dirPacker(manifest, dir) {
+            return tar.c({
+                cwd: dir,
+                gzip: true,
+                portable: true,
+                prefix: "package/"
+            }, ["."])
+        }
+    };
 
     // Resolve plugin name from spec
+    process.stdout.write(`Loading plugin manifest...\n`);
     let { name } = await pacote.manifest(pluginArg, pacoteOpts);
     if (!name) {
         process.stderr.write(`Could not resolve plugin manifest for spec "${pluginArg}"\n`);
@@ -124,11 +141,39 @@ async function installPlugin(
     }
 
     // Extract plugin to a temporary folder
+    process.stdout.write(`Extracting plugin package...\n`);
     let pluginTmpPath = path.join(tmpDir, name.replace(/\//g, path.sep));
     await pacote.extract(pluginArg, pluginTmpPath, pacoteOpts);
 
     // Get plugin manifest
-    let { publisher, distDir, mainJsFilename, pluginName, version } = readPluginManifest(pluginTmpPath);
+    let {
+        publisher, distDir, mainJsFilename, pluginName, version, hasPrepareScript, hasBuildScript
+    } = readPluginManifest(pluginTmpPath);
+
+    process.stdout.write(`Found plugin "${publisher}/${pluginName}" (version: ${version}, npm: "${name}").\n`);
+
+    let mainJsPath = path.join(pluginTmpPath, distDir, mainJsFilename);
+    if (!fs.existsSync(mainJsPath)) {
+        // We might be installing from git; attempt to build the plugin first
+        process.stdout.write(`WARNING: No main JS file found in plugin package at ` +
+            `"${path.join(distDir, mainJsFilename)}". ` +
+            `Building the plugin from source...\n`);
+
+        let npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+        process.stdout.write(`Running npm install...\n`);
+        child_process.spawnSync(npmCmd, ["install"], { cwd: pluginTmpPath, stdio: "inherit" });
+        process.stdout.write(`\n`);
+        if (!hasPrepareScript && hasBuildScript) {
+            process.stdout.write(`Plugin doesn't seem to have a "prepare" script. Doing "npm run build" instead...\n`);
+            child_process.spawnSync(npmCmd, ["run", "build"], { cwd: pluginTmpPath, stdio: "inherit" });
+            process.stdout.write(`\n`);
+        }
+
+        if (!fs.existsSync(mainJsPath)) {
+            process.stderr.write(`Couldn't resolve plugin main JS file at "${mainJsPath}"\n`);
+            process.exit(-1);
+        }
+    }
 
     let pluginSrcDistPath = path.join(pluginTmpPath, distDir);
     let pluginTargetBasePath = getPluginTargetPath(targetDir, publisher, pluginName);
@@ -138,6 +183,7 @@ async function installPlugin(
         fs.removeSync(pluginTargetBasePath);
     }
 
+    process.stdout.write(`Copying plugin distributables to target directory...\n`);
     fs.copySync(pluginSrcDistPath, pluginTargetPath);
 
     if (mainJsFilename !== "index.js") {
@@ -150,11 +196,20 @@ async function installPlugin(
         }
     }
 
-    process.stdout.write(`Installed to "${pluginTargetPath}".\n`);
+    await fs.emptyDir(pacoteCacheDir);
+    await fs.rmdir(pacoteCacheDir);
+
+    process.stdout.write(`\nSuccessfully installed plugin "${publisher}/${pluginName}" to "${pluginTargetPath}".\n`);
 }
 
 async function linkPlugin(/** @type string */ targetDir, /** @type string */ pluginPath) {
-    let { name, publisher, distDir, mainJsFilename, pluginName} = readPluginManifest(path.resolve(pluginPath));
+    let { name, publisher, distDir, mainJsFilename, pluginName} = readPluginManifest(pluginPath);
+
+    let mainJsPath = path.join(pluginPath, distDir, mainJsFilename);
+    if (!fs.existsSync(mainJsPath)) {
+        process.stderr.write(`Couldn't resolve plugin main JS file at "${mainJsPath}"\n`);
+        process.exit(-1);
+    }
 
     if (mainJsFilename !== "index.js") {
         process.stderr.write(`The plugin can only be linked if its main js file is named "index.js" (main js: "${mainJsFilename}", package: ${name}).`);
@@ -177,7 +232,7 @@ function getPluginTargetPath(/** @type string */ targetDir, /** @type string */ 
 
 function readPluginManifest(/** @type string */ pluginPath) {
     /** @type {Object.<string, string>} */
-    let { name, publisher, main, pluginName, version } = fs.readJsonSync(path.join(pluginPath, "package.json"), { encoding: "utf-8" });
+    let { name, publisher, main, pluginName, version, scripts } = fs.readJsonSync(path.join(pluginPath, "package.json"), { encoding: "utf-8" });
     if (!publisher) {
         process.stderr.write(`Missing "publisher" field in package.json for plugin "${name}".\n`);
         process.exit(-1);
@@ -210,18 +265,17 @@ function readPluginManifest(/** @type string */ pluginPath) {
     let distDir = mainMatch[1] || ".";
     let mainJsFilename = mainMatch[2];
 
-    let mainJsPath = path.join(pluginPath, distDir, mainJsFilename);
-    if (!fs.existsSync(mainJsPath)) {
-        process.stderr.write(`Couldn't resolve plugin js entrypoint at "${mainJsPath}"\n`);
-        process.exit(-1);
-    }
+    let hasPrepareScript = !!/** @type any */(scripts).prepare;
+    let hasBuildScript = !!/** @type any */(scripts).build;
 
     return {
         pluginName,
         version,
         publisher,
         distDir,
-        mainJsFilename
+        mainJsFilename,
+        hasPrepareScript,
+        hasBuildScript
     }
 }
 
