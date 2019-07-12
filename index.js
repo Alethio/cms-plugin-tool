@@ -265,8 +265,8 @@ function readPluginManifest(/** @type string */ pluginPath) {
     let distDir = mainMatch[1] || ".";
     let mainJsFilename = mainMatch[2];
 
-    let hasPrepareScript = !!/** @type any */(scripts).prepare;
-    let hasBuildScript = !!/** @type any */(scripts).build;
+    let hasPrepareScript = scripts && !!/** @type any */(scripts).prepare;
+    let hasBuildScript = scripts && !!/** @type any */(scripts).build;
 
     return {
         pluginName,
