@@ -16,6 +16,7 @@
     "url": "https://github.com/Alethio/cms-plugin-tool"
   },
   "dependencies": {
+    "commander": "^2.20.0",
     "fs-extra": "^8.0.1",
     "pacote": "^9.5.0",
     "tar": "^4.4.10",
