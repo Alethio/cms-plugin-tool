@@ -6,62 +6,72 @@ const child_process = require("child_process");
 const pacote = require("pacote");
 const validateNpmPackageName = require("validate-npm-package-name");
 const tar = require("tar");
+const commander = require('commander');
 
-(async () => {
-    let [, , cmd, ...args] = process.argv;
+function wrapErrors(/** @type {(...args: any[]) => Promise<any>} */fn) {
+    return (...args) => fn(...args).catch(e => {
+        process.stderr.write(e.stack + "\n");
+        process.exit(-1);
+    });
+}
 
-    if (!cmd) {
-        printUsage();
-        process.exit(0);
-    }
+let program = new commander.Command();
+program
+    .name("acp")
+    .description("Alethio CMS Plugin tool\n\nacp [command] -h for help on a specific command.")
+    .version(JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf-8")).version);
 
-    if (cmd === "install" || cmd === "link") {
-        let targetDir = path.resolve(process.cwd(), "dist", "plugins");
-        if (args[0] === "-t" || args[0] === "--target") {
-            args.shift();
-            targetDir = path.resolve(args.shift());
-        }
-        let pluginPaths = args;
+let defaultTargetPath = path.join("dist", "plugins");
 
-        if (!pluginPaths.length) {
-            printUsage();
-            process.exit(-1);
-        }
+program
+    .command("install <npm_package_spec...>")
+    .alias("i")
+    .description("Installs one or more plugins in a local folder.", {
+        "npm_package_spec": "Anything that npm recognizes (npm package, github handle, local path etc.)"
+    })
+    .option("-t, --target <target_path>", "where to install the plugin", defaultTargetPath)
+    .option("-d, --dev", "install plugin in dev mode (no <plugin>/<version> folder nesting)")
+    .action(wrapErrors(async (npmPackageSpecs, cmd) => {
+        let targetDir = path.resolve(cmd.target);
+        let devMode = cmd.dev;
 
-        if (cmd === "install") {
-            let devMode = false;
-            if (pluginPaths[0] === "-d" || pluginPaths[0] === "--dev") {
-                pluginPaths.shift();
-                devMode = true;
+        let tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-"));
+        try {
+            for (let pluginArg of npmPackageSpecs) {
+                process.stdout.write(`\n> Install plugin "${pluginArg}":\n\n`);
+                await installPlugin(targetDir, pluginArg, tmpDir, devMode);
             }
+        } finally {
+            fs.emptyDirSync(tmpDir);
+            fs.rmdirSync(tmpDir);
+        }
+    }));
 
-            let tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-"));
-            try {
-                for (let pluginArg of pluginPaths) {
-                    await installPlugin(targetDir, pluginArg, tmpDir, devMode);
-                }
-            } finally {
-                fs.emptyDirSync(tmpDir);
-                fs.rmdirSync(tmpDir);
-            }
-        } else if (cmd === "link") {
-            for (let pluginPath of pluginPaths) {
-                await linkPlugin(targetDir, path.resolve(pluginPath));
-            }
-        }
-    } else if (cmd === "init") {
-        let jsMode = false;
-        if (args[0] === "--js") {
-            args.shift();
-            jsMode = true;
-        }
-        if (args.length !== 3) {
-            process.stderr.write("Invalid number of arguments\n\n");
-            printUsage();
-            process.exit(-1);
-        }
+program
+    .command("link <plugin_dir...>")
+    .description("Installs one or more plugins via symlinks for development purposes.", {
+        "plugin_dir": "A local folder that contains a plugin manifest."
+    })
+    .option("-t, --target <target_path>", "where to link the plugin", defaultTargetPath)
+    .action(wrapErrors(async (pluginDirs, cmd) => {
+        let targetDir = path.resolve(cmd.target);
 
-        let [npmPackageName, publisher, pluginName] = args;
+        for (let pluginPath of pluginDirs) {
+            process.stdout.write(`\n> Link plugin "${pluginPath}":\n\n`);
+            await linkPlugin(targetDir, path.resolve(pluginPath));
+        }
+    }));
+
+program
+    .command("init <npm_package_name> <publisher> <plugin_name>")
+    .description("Generates plugin boilerplate in the current folder. IMPORTANT: Any existing files will be overwritten.", {
+        "npm_package_name": "Package name that will be used in the generated package.json. Useful if the plugin will be distributed via npm.",
+        "publisher": "A handle identifying the publisher of the plugin. It should be something unique, like the domain-name of an organization or a user's GitHub handle.",
+        "plugin_name": "The name of the plugin. The CMS will reference the plugin by this name, together with the publisher (e.g. plugin://publisher/plugin_name)."
+    })
+    .option("--js", "should the init command generate JavaScript boilerplate instead of TypeScript boilerplate?")
+    .action(wrapErrors(async (npmPackageName, publisher, pluginName, cmd) => {
+        let jsMode = cmd.js;
 
         if (!validateNpmPackageName(npmPackageName).validForNewPackages) {
             process.stderr.write(`Invalid npm package name "${npmPackageName}"\n`);
@@ -70,15 +80,21 @@ const tar = require("tar");
         validatePublisherName(publisher);
         validatePluginName(pluginName);
 
+        process.stdout.write(`\n> Create boilerplate for plugin "${publisher}/${pluginName}":\n\n`);
         createBoilerplate(npmPackageName, publisher, pluginName, jsMode, process.cwd());
-    } else {
-        process.stderr.write(`Unsupported command ${cmd}\n`);
-        process.exit(-1);
-    }
-})().catch(e => {
-    process.stderr.write(e.stack + "\n");
-    process.exit(-1);
+        process.stdout.write("Done.\n");
+    }));
+
+program.on("command:*", () => {
+    program.outputHelp();
+    process.exit(1);
 });
+
+program.parse(process.argv);
+
+if (!program.args.length) {
+    program.help();
+}
 
 function createBoilerplate(
     /** @type string */ npmPackageName,
@@ -89,6 +105,11 @@ function createBoilerplate(
 ) {
     let packageJsonPath = path.join(targetPath, "package.json");
     let webpackConfigPath = path.join(targetPath, "webpack.config.js");
+
+    if (fs.readdirSync(targetPath).filter(f => !f.match(/^\./)).length) {
+        process.stderr.write(`Error: Can't create boilerplate in a non-empty folder.\n`);
+        process.exit(1);
+    }
 
     // HACK: this is a copy paste from @alethio/cms package
     let pluginLibraryName = "__" + (publisher + "/" + pluginName)
@@ -231,8 +252,14 @@ function getPluginTargetPath(/** @type string */ targetDir, /** @type string */ 
 }
 
 function readPluginManifest(/** @type string */ pluginPath) {
+    let packageJsonPath = path.join(pluginPath, "package.json");
+    if (!fs.existsSync(packageJsonPath)) {
+        process.stderr.write(`No package.json manifest found at local path "${packageJsonPath}"\n`);
+        process.exit(1);
+    }
+
     /** @type {Object.<string, string>} */
-    let { name, publisher, main, pluginName, version, scripts } = fs.readJsonSync(path.join(pluginPath, "package.json"), { encoding: "utf-8" });
+    let { name, publisher, main, pluginName, version, scripts } = fs.readJsonSync(packageJsonPath, { encoding: "utf-8" });
     if (!publisher) {
         process.stderr.write(`Missing "publisher" field in package.json for plugin "${name}".\n`);
         process.exit(-1);
@@ -291,26 +318,4 @@ function validatePluginName(/** @type string */ pluginName) {
         process.stderr.write(`Plugin name "${pluginName}" must contain only lowercase letters, numbers and hyphens (-). Numbers are not allowed immediately after a hyphen.\n`);
         process.exit(-1);
     }
-}
-
-function printUsage() {
-    process.stdout.write(`Usage:
-acp install [{ -t | --target } <target_path>] [{ -d | --dev }] <npm_package_location1> [<npm_package_location2> [...]]
-acp link [{ -t | --target } <target_path>] <plugin_dir> [<plugin_dir2] [...]]
-acp init [--js] <plugin_npm_package_name> <plugin_publisher> <plugin_name>
-
-Commands:
-install         - installs the plugin in a local folder
-link            - symlinks the plugin's dist folder to a local folder for development
-init            - creates plugin boilerplate in the current folder
-
-Options:
--t | --target   - where to install the plugin (defaults to ./dist/plugins)
--d | --dev      - install plugin in dev mode (doesn't create folder structure for multiple versions)
---js            - should the init command generate JavaScript boilerplate instead of TypeScript boilerplate?
-
-Arguments:
-<npm_package_location>  - anything that can be passed to npm install
-<plugin_dir>            - a local folder that contains a plugin manifest
-`);
 }
