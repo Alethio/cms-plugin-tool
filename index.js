@@ -90,17 +90,17 @@ program
     }));
 
 program
-    .command("init <npm_package_name> <publisher> <plugin_name>")
-    .description("Generates plugin boilerplate in the current folder. IMPORTANT: Any existing files will be overwritten.", {
+    .command("init <publisher> <plugin_name> [npm_package_name]")
+    .description("Generates plugin boilerplate in the current folder. IMPORTANT: Folder must be empty.", {
         "npm_package_name": "Package name that will be used in the generated package.json. Useful if the plugin will be distributed via npm.",
         "publisher": "A handle identifying the publisher of the plugin. It should be something unique, like the domain-name of an organization or a user's GitHub handle.",
         "plugin_name": "The name of the plugin. The CMS will reference the plugin by this name, together with the publisher (e.g. plugin://publisher/plugin_name)."
     })
     .option("--js", "should the init command generate JavaScript boilerplate instead of TypeScript boilerplate?")
-    .action(wrapErrors(async (npmPackageName, publisher, pluginName, cmd) => {
+    .action(wrapErrors(async (publisher, pluginName, npmPackageName = "", cmd) => {
         let jsMode = cmd.js;
 
-        if (!validateNpmPackageName(npmPackageName).validForNewPackages) {
+        if (npmPackageName && !validateNpmPackageName(npmPackageName).validForNewPackages) {
             throw new UserError(`Invalid npm package name "${npmPackageName}"`);
         }
         validatePublisherName(publisher);
@@ -155,6 +155,8 @@ function createBoilerplate(
         packageJsonPath,
         fs.readFileSync(packageJsonPath, { encoding: "utf-8"})
             .replace(/<package_name>/g, npmPackageName)
+            // if npmPackageName is not set, omit "name" field entirely
+            .replace(/\s"name": "",\n/, "")
             .replace(/<publisher>/g, publisher)
             .replace(/<plugin_name>/g, pluginName)
     );
