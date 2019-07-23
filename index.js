@@ -164,6 +164,11 @@ function createBoilerplate(
             .replace(/<library_name>/g, pluginLibraryName)
     );
 
+    process.stdout.write(`Created boilerplate in working directory.\n`);
+
+    let npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    process.stdout.write(`Running npm install...\n`);
+    child_process.spawnSync(npmCmd, ["install"], { cwd: targetPath, stdio: "inherit" });
 }
 
 async function installPlugin(
