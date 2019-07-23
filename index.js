@@ -143,6 +143,14 @@ function createBoilerplate(
         .replace(/-([a-z])/gi, (match, capture) => capture.toUpperCase());
 
     fs.copySync(path.join(__dirname, "boilerplate", jsMode ? "js" : "ts"), targetPath);
+
+    if (!fs.existsSync(path.join(targetPath, ".gitignore"))) {
+        fs.copySync(
+            path.join(__dirname, "boilerplate", "git", "gitignore.tpl"),
+            path.join(targetPath, ".gitignore")
+        );
+    }
+
     fs.writeFileSync(
         packageJsonPath,
         fs.readFileSync(packageJsonPath, { encoding: "utf-8"})
