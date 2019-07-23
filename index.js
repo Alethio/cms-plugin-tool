@@ -92,7 +92,7 @@ program.on("command:*", () => {
 
 program.parse(process.argv);
 
-if (!program.args.length) {
+if (process.argv.length < 3) {
     program.help();
 }
 
