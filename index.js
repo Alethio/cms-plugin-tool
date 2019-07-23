@@ -208,6 +208,12 @@ async function installPlugin(
                 // Clear other installed versions if we're installing in dev mode
                 fs.emptyDirSync(pluginTargetBasePath);
                 fs.removeSync(pluginTargetBasePath);
+            } else {
+                if (fs.existsSync(path.join(pluginTargetBasePath, "index.js"))) {
+                    // Clear everything if previous installation was in dev mode
+                    fs.emptyDirSync(pluginTargetBasePath);
+                    fs.removeSync(pluginTargetBasePath);
+                }
             }
         }
     }
