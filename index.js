@@ -10,10 +10,12 @@ const commander = require('commander');
 
 function wrapErrors(/** @type {(...args: any[]) => Promise<any>} */fn) {
     return (...args) => fn(...args).catch(e => {
-        process.stderr.write(e.stack + "\n");
-        process.exit(-1);
+        process.stderr.write(e instanceof UserError ? `Error: ${e.message}\n` : e.stack + "\n");
+        process.exit(1);
     });
 }
+
+class UserError extends Error {}
 
 let program = new commander.Command();
 program
@@ -99,8 +101,7 @@ program
         let jsMode = cmd.js;
 
         if (!validateNpmPackageName(npmPackageName).validForNewPackages) {
-            process.stderr.write(`Invalid npm package name "${npmPackageName}"\n`);
-            process.exit(-1);
+            throw new UserError(`Invalid npm package name "${npmPackageName}"`);
         }
         validatePublisherName(publisher);
         validatePluginName(pluginName);
@@ -132,8 +133,7 @@ function createBoilerplate(
     let webpackConfigPath = path.join(targetPath, "webpack.config.js");
 
     if (fs.readdirSync(targetPath).filter(f => !f.match(/^\./)).length) {
-        process.stderr.write(`Error: Can't create boilerplate in a non-empty folder.\n`);
-        process.exit(1);
+        throw new UserError(`Can't create boilerplate in a non-empty folder.`);
     }
 
     // HACK: this is a copy paste from @alethio/cms package
@@ -189,8 +189,7 @@ async function installPlugin(
         }
 
         if (!fs.existsSync(mainJsPath)) {
-            process.stderr.write(`Couldn't resolve plugin main JS file at "${mainJsPath}"\n`);
-            process.exit(-1);
+            throw new UserError(`Couldn't resolve plugin main JS file at "${mainJsPath}"`);
         }
     }
 
@@ -306,8 +305,7 @@ async function extractPlugin(
     process.stdout.write(`Loading plugin manifest...\n`);
     let { name } = await pacote.manifest(npmPackageSpec, pacoteOpts);
     if (!name) {
-        process.stderr.write(`Could not resolve plugin manifest for spec "${npmPackageSpec}"\n`);
-        process.exit(-1);
+        throw new UserError(`Could not resolve plugin manifest for spec "${npmPackageSpec}"`);
     }
 
     // Extract plugin to a temporary folder
@@ -322,13 +320,11 @@ async function linkPlugin(/** @type string */ targetDir, /** @type string */ plu
 
     let mainJsPath = path.join(pluginPath, distDir, mainJsFilename);
     if (!fs.existsSync(mainJsPath)) {
-        process.stderr.write(`Couldn't resolve plugin main JS file at "${mainJsPath}"\n`);
-        process.exit(-1);
+        throw new UserError(`Couldn't resolve plugin main JS file at "${mainJsPath}"`);
     }
 
     if (mainJsFilename !== "index.js") {
-        process.stderr.write(`The plugin can only be linked if its main js file is named "index.js" (main js: "${mainJsFilename}", package: ${name}).`);
-        process.exit(-1);
+        throw new UserError(`The plugin can only be linked if its main js file is named "index.js" (main js: "${mainJsFilename}", package: ${name}).`);
     }
 
     let pluginSrcDistPath = path.resolve(pluginPath, distDir);
@@ -348,23 +344,19 @@ function getPluginTargetPath(/** @type string */ targetDir, /** @type string */ 
 function readPluginManifest(/** @type string */ pluginPath) {
     let packageJsonPath = path.join(pluginPath, "package.json");
     if (!fs.existsSync(packageJsonPath)) {
-        process.stderr.write(`No package.json manifest found at local path "${packageJsonPath}"\n`);
-        process.exit(1);
+        throw new UserError(`No package.json manifest found at local path "${packageJsonPath}"`);
     }
 
     /** @type {Object.<string, string>} */
     let { name, publisher, main, pluginName, version, scripts } = fs.readJsonSync(packageJsonPath, { encoding: "utf-8" });
     if (!publisher) {
-        process.stderr.write(`Missing "publisher" field in package.json for plugin "${name}".\n`);
-        process.exit(-1);
+        throw new UserError(`Missing "publisher" field in package.json for plugin "${name}".`);
     }
     if (!main) {
-        process.stderr.write(`Missing "main" field in package.json for plugin "${name}".\n`);
-        process.exit(-1);
+        throw new UserError(`Missing "main" field in package.json for plugin "${name}".`);
     }
     if (name.match(/^@/) && !pluginName) {
-        process.stderr.write(`Scoped packages must define a custom "pluginName" field in package.json (package: ${name})\n`);
-        process.exit(-1);
+        throw new UserError(`Scoped packages must define a custom "pluginName" field in package.json (package: ${name})`);
     }
 
     pluginName = pluginName || name;
@@ -373,14 +365,12 @@ function readPluginManifest(/** @type string */ pluginPath) {
     // Get js files based on "main" field in package.json and copy them to plugins folder
     /** @type string[] */ let mainMatch = main.match(/(?:(.+)\/)?([^/]+\.js)$/);
     if (!mainMatch) {
-        process.stderr.write(`Couldn't resolve plugin main field in package.json for plugin package "${name}".\n`);
-        process.exit(-1);
+        throw new UserError(`Couldn't resolve plugin main field in package.json for plugin package "${name}".`);
     }
 
     if (!mainMatch[1]) {
-        process.stderr.write(`Couldn't resolve js dir for plugin "${name}". ` +
-            `"main" field in package.json must point to a package subdirectory containing only the js bundle and its public dependencies\n`);
-        process.exit(-1);
+        throw new UserError(`Couldn't resolve js dir for plugin "${name}". ` +
+            `"main" field in package.json must point to a package subdirectory containing only the js bundle and its public dependencies`);
     }
 
     let distDir = mainMatch[1] || ".";
@@ -403,14 +393,12 @@ function readPluginManifest(/** @type string */ pluginPath) {
 
 function validatePublisherName(/** @type string */ publisher) {
     if (!publisher.match(/^[a-z0-9]+((-|\.)[a-z][a-z0-9]*)*$/)) {
-        process.stderr.write(`Publisher name "${publisher}" can consist only of lowercase letter and number groups separated by hyphens (-) or dots (.). Numbers are now allowed immediately after a hyphen (-)\n`);
-        process.exit(-1);
+        throw new UserError(`Publisher name "${publisher}" can consist only of lowercase letter and number groups separated by hyphens (-) or dots (.). Numbers are now allowed immediately after a hyphen (-)`);
     }
 }
 
 function validatePluginName(/** @type string */ pluginName) {
     if (!pluginName.match(/^[a-z0-9]+(-[a-z][a-z0-9]*)*$/)) {
-        process.stderr.write(`Plugin name "${pluginName}" must contain only lowercase letters, numbers and hyphens (-). Numbers are not allowed immediately after a hyphen.\n`);
-        process.exit(-1);
+        throw new UserError(`Plugin name "${pluginName}" must contain only lowercase letters, numbers and hyphens (-). Numbers are not allowed immediately after a hyphen.`);
     }
 }
