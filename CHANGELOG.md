@@ -1,3 +1,9 @@
+# Unreleased
+
+- Add uninstall command for easily removing installed plugins
+- Behavior changed for `acp install`. It will now overwrite existing plugins when switching to/from `--dev` mode.
+- More verbose command output
+
 # v1.0.0-beta.3
 
 - Fix regression for plugins that don't have a scripts section in package.json

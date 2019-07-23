@@ -63,6 +63,31 @@ program
     }));
 
 program
+    .command("uninstall <npm_package_spec...>")
+    .alias("remove")
+    .description("Uninstall a plugin from the target folder.", {
+        "npm_package_spec": "Anything that npm recognizes (npm package, github handle, local path etc.)"
+    })
+    .option("-t, --target <target_path>", "Path where the plugin is installed. " +
+        "Same as the target path provided to 'install' command.", defaultTargetPath)
+    .option("-a, --all", "Remove all installed plugin versions, instead of just one.")
+    .action(wrapErrors(async (npmPackageSpecs, cmd) => {
+        let targetDir = path.resolve(cmd.target);
+        let allVersions = cmd.all;
+
+        let tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-"));
+        try {
+            for (let pluginArg of npmPackageSpecs) {
+                process.stdout.write(`\n> Uninstall plugin "${pluginArg}":\n\n`);
+                await uninstallPlugin(targetDir, pluginArg, tmpDir, allVersions);
+            }
+        } finally {
+            fs.emptyDirSync(tmpDir);
+            fs.rmdirSync(tmpDir);
+        }
+    }));
+
+program
     .command("init <npm_package_name> <publisher> <plugin_name>")
     .description("Generates plugin boilerplate in the current folder. IMPORTANT: Any existing files will be overwritten.", {
         "npm_package_name": "Package name that will be used in the generated package.json. Useful if the plugin will be distributed via npm.",
@@ -134,44 +159,17 @@ function createBoilerplate(
 }
 
 async function installPlugin(
-    /** @type string */ targetDir, /** @type string */ pluginArg, /** @type string */ tmpDir,
+    /** @type string */ targetDir, /** @type string */ npmPackageSpec, /** @type string */ tmpDir,
     devMode = false
 ) {
     let pacoteCacheDir = path.join(tmpDir, "pacote-cache");
-    let pacoteOpts = {
-        cache: pacoteCacheDir,
-        // The default dirPacker strips .npmignore'd files, which we don't want to do if installing from git/file,
-        // because we will build the plugin locally.
-        // See https://github.com/npm/pacote/blob/latest/lib/util/pack-dir.js#L35
-        dirPacker(manifest, dir) {
-            return tar.c({
-                cwd: dir,
-                gzip: true,
-                portable: true,
-                prefix: "package/"
-            }, ["."])
-        }
-    };
+    let pluginTmpPath = await extractPlugin(npmPackageSpec, tmpDir, pacoteCacheDir);
 
-    // Resolve plugin name from spec
-    process.stdout.write(`Loading plugin manifest...\n`);
-    let { name } = await pacote.manifest(pluginArg, pacoteOpts);
-    if (!name) {
-        process.stderr.write(`Could not resolve plugin manifest for spec "${pluginArg}"\n`);
-        process.exit(-1);
-    }
-
-    // Extract plugin to a temporary folder
-    process.stdout.write(`Extracting plugin package...\n`);
-    let pluginTmpPath = path.join(tmpDir, name.replace(/\//g, path.sep));
-    await pacote.extract(pluginArg, pluginTmpPath, pacoteOpts);
-
-    // Get plugin manifest
     let {
-        publisher, distDir, mainJsFilename, pluginName, version, hasPrepareScript, hasBuildScript
+        name, publisher, distDir, mainJsFilename, pluginName, version, hasPrepareScript, hasBuildScript
     } = readPluginManifest(pluginTmpPath);
 
-    process.stdout.write(`Found plugin "${publisher}/${pluginName}" (version: ${version}, npm: "${name}").\n`);
+    process.stdout.write(`Resolved plugin spec (plugin: "${publisher}/${pluginName}", version: ${version}, npm: "${name}").\n`);
 
     let mainJsPath = path.join(pluginTmpPath, distDir, mainJsFilename);
     if (!fs.existsSync(mainJsPath)) {
@@ -199,9 +197,19 @@ async function installPlugin(
     let pluginSrcDistPath = path.join(pluginTmpPath, distDir);
     let pluginTargetBasePath = getPluginTargetPath(targetDir, publisher, pluginName);
     let pluginTargetPath = devMode ? pluginTargetBasePath : path.join(pluginTargetBasePath, version);
-    // clean up from a previous link command
-    if (fs.existsSync(pluginTargetBasePath) && fs.lstatSync(pluginTargetBasePath).isSymbolicLink()) {
-        fs.removeSync(pluginTargetBasePath);
+
+    if (fs.existsSync(pluginTargetBasePath)) {
+        // We already have something installed/linked
+        if (fs.lstatSync(pluginTargetBasePath).isSymbolicLink()) {
+            // clean up from a previous link command
+            fs.removeSync(pluginTargetBasePath);
+        } else {
+            if (devMode || fs.existsSync(path.join(pluginTargetBasePath, "index.js"))) {
+                // Clear other installed versions if we're installing in dev mode, or we detected an old --dev installation
+                fs.emptyDirSync(pluginTargetBasePath);
+                fs.removeSync(pluginTargetBasePath);
+            }
+        }
     }
 
     process.stdout.write(`Copying plugin distributables to target directory...\n`);
@@ -221,6 +229,92 @@ async function installPlugin(
     await fs.rmdir(pacoteCacheDir);
 
     process.stdout.write(`\nSuccessfully installed plugin "${publisher}/${pluginName}" to "${pluginTargetPath}".\n`);
+}
+
+
+async function uninstallPlugin(
+    /** @type string */ targetDir, /** @type string */ npmPackageSpec, /** @type string */ tmpDir,
+    allVersions = false
+) {
+    let pacoteCacheDir = path.join(tmpDir, "pacote-cache");
+    let pluginTmpPath = await extractPlugin(npmPackageSpec, tmpDir, pacoteCacheDir);
+
+    let { name, publisher, pluginName, version } = readPluginManifest(pluginTmpPath);
+
+    process.stdout.write(`Resolved plugin spec (plugin: "${publisher}/${pluginName}", version: ${version}, npm: "${name}").\n`);
+
+    let pluginTargetBasePath = getPluginTargetPath(targetDir, publisher, pluginName);
+
+    if (fs.existsSync(pluginTargetBasePath) && fs.lstatSync(pluginTargetBasePath).isSymbolicLink()) {
+        // Plugin was linked, just unlink
+        fs.removeSync(pluginTargetBasePath);
+        process.stdout.write(`\nUnlinked plugin "${publisher}/${pluginName}".\n`);
+    } else {
+        /** e.g. publisher/my-plugin/index.js */
+        let hasFlatInstall = fs.existsSync(path.join(pluginTargetBasePath, "index.js"));
+        /** e.g. publisher/my-plugin/1.0.0/ */
+        let versionedPluginPath = path.join(pluginTargetBasePath, version);
+        /** e.g. publisher/my-plugin/1.0.0/index.js */
+        let hasVersionedInstall = fs.existsSync(path.join(versionedPluginPath, "index.js"));
+
+        if (!fs.existsSync(pluginTargetBasePath) || (!hasFlatInstall && !hasVersionedInstall)) {
+            process.stderr.write(`Warning: No plugin installation found at "${pluginTargetBasePath}"\n`);
+        } else {
+            // Delete the entire plugin folder or the selected version, based on selection
+            let pluginInstallPath = allVersions || hasFlatInstall ? pluginTargetBasePath : versionedPluginPath;
+            await fs.emptyDir(pluginInstallPath);
+            await fs.rmdir(pluginInstallPath);
+
+            // Clean-up plugin folder if empty
+            if (
+                hasVersionedInstall && fs.existsSync(pluginTargetBasePath) &&
+                !fs.readdirSync(pluginTargetBasePath).length
+            ) {
+                await fs.rmdir(pluginTargetBasePath);
+            }
+
+            process.stdout.write(`\nUninstalled plugin "${publisher}/${pluginName}"` +
+                (allVersions || hasFlatInstall ? "" : ` (version: ${version})`) + ".\n");
+        }
+    }
+
+    await fs.emptyDir(pacoteCacheDir);
+    await fs.rmdir(pacoteCacheDir);
+}
+
+async function extractPlugin(
+    /** @type string */npmPackageSpec,
+    /** @type string */tmpDir,
+    /** @type string */pacoteCacheDir
+) {
+    let pacoteOpts = {
+        cache: pacoteCacheDir,
+        // The default dirPacker strips .npmignore'd files, which we don't want to do if installing from git/file,
+        // because we will build the plugin locally.
+        // See https://github.com/npm/pacote/blob/latest/lib/util/pack-dir.js#L35
+        dirPacker(manifest, dir) {
+            return tar.c({
+                cwd: dir,
+                gzip: true,
+                portable: true,
+                prefix: "package/"
+            }, ["."])
+        }
+    };
+
+    // Resolve plugin name from spec
+    process.stdout.write(`Loading plugin manifest...\n`);
+    let { name } = await pacote.manifest(npmPackageSpec, pacoteOpts);
+    if (!name) {
+        process.stderr.write(`Could not resolve plugin manifest for spec "${npmPackageSpec}"\n`);
+        process.exit(-1);
+    }
+
+    // Extract plugin to a temporary folder
+    let pluginTmpPath = path.join(tmpDir, name.replace(/\//g, path.sep));
+    await pacote.extract(npmPackageSpec, pluginTmpPath, pacoteOpts);
+
+    return pluginTmpPath;
 }
 
 async function linkPlugin(/** @type string */ targetDir, /** @type string */ pluginPath) {
@@ -244,7 +338,7 @@ async function linkPlugin(/** @type string */ targetDir, /** @type string */ plu
     fs.removeSync(pluginTargetPath);
     await fs.symlink(pluginSrcDistPath, pluginTargetPath, "junction");
 
-    process.stdout.write(`Symlinked "${pluginSrcDistPath}" to "${pluginTargetPath}".\n`);
+    process.stdout.write(`Symlinked plugin to "${pluginTargetPath}".\n`);
 }
 
 function getPluginTargetPath(/** @type string */ targetDir, /** @type string */ publisher, /** @type string */ pluginName) {
@@ -296,6 +390,7 @@ function readPluginManifest(/** @type string */ pluginPath) {
     let hasBuildScript = scripts && !!/** @type any */(scripts).build;
 
     return {
+        name,
         pluginName,
         version,
         publisher,
