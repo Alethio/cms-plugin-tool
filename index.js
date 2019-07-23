@@ -250,8 +250,11 @@ async function uninstallPlugin(
         fs.removeSync(pluginTargetBasePath);
         process.stdout.write(`\nUnlinked plugin "${publisher}/${pluginName}".\n`);
     } else {
-        let versionedPluginPath = path.join(pluginTargetBasePath, version);
+        /** e.g. publisher/my-plugin/index.js */
         let hasFlatInstall = fs.existsSync(path.join(pluginTargetBasePath, "index.js"));
+        /** e.g. publisher/my-plugin/1.0.0/ */
+        let versionedPluginPath = path.join(pluginTargetBasePath, version);
+        /** e.g. publisher/my-plugin/1.0.0/index.js */
         let hasVersionedInstall = fs.existsSync(path.join(versionedPluginPath, "index.js"));
 
         if (!fs.existsSync(pluginTargetBasePath) || (!hasFlatInstall && !hasVersionedInstall)) {
