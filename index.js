@@ -344,7 +344,7 @@ async function linkPlugin(/** @type string */ targetDir, /** @type string */ plu
     fs.removeSync(pluginTargetPath);
     await fs.symlink(pluginSrcDistPath, pluginTargetPath, "junction");
 
-    process.stdout.write(`Symlinked "${pluginSrcDistPath}" to "${pluginTargetPath}".\n`);
+    process.stdout.write(`Symlinked plugin to "${pluginTargetPath}".\n`);
 }
 
 function getPluginTargetPath(/** @type string */ targetDir, /** @type string */ publisher, /** @type string */ pluginName) {
