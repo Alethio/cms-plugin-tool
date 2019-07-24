@@ -1,4 +1,4 @@
-# Unreleased
+# v1.0.0-beta.4
 
 - Add uninstall command for easily removing installed plugins
 - Add rename command for easily changing the publisher, the plugin name or the npm package name of the plugin
