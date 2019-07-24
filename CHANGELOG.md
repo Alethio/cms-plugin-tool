@@ -3,7 +3,7 @@
 - Add uninstall command for easily removing installed plugins
 - Add rename command for easily changing the publisher, the plugin name or the npm package name of the plugin
 - Behavior changed for `acp install`. It will now overwrite existing plugins when switching to/from `--dev` mode.
-- Behavior change for `acp init`. Order of the parameters was changed. `npm_package_name` is now the last parameter and is optional. `npm install` is automatically executed after the boilerplate is generated.
+- Behavior change for `acp init`. `npm_package_name` is now the last argument and is optional. `npm install` is automatically executed after generating the boilerplate.
 - More verbose command output
 - Add default .gitignore and .npmignore files to generated boilerplate.
 
