@@ -90,17 +90,17 @@ program
     }));
 
 program
-    .command("init <npm_package_name> <publisher> <plugin_name>")
-    .description("Generates plugin boilerplate in the current folder. IMPORTANT: Any existing files will be overwritten.", {
+    .command("init <publisher> <plugin_name> [npm_package_name]")
+    .description("Generates plugin boilerplate in the current folder. IMPORTANT: Folder must be empty.", {
         "npm_package_name": "Package name that will be used in the generated package.json. Useful if the plugin will be distributed via npm.",
         "publisher": "A handle identifying the publisher of the plugin. It should be something unique, like the domain-name of an organization or a user's GitHub handle.",
         "plugin_name": "The name of the plugin. The CMS will reference the plugin by this name, together with the publisher (e.g. plugin://publisher/plugin_name)."
     })
     .option("--js", "should the init command generate JavaScript boilerplate instead of TypeScript boilerplate?")
-    .action(wrapErrors(async (npmPackageName, publisher, pluginName, cmd) => {
+    .action(wrapErrors(async (publisher, pluginName, npmPackageName = "", cmd) => {
         let jsMode = cmd.js;
 
-        if (!validateNpmPackageName(npmPackageName).validForNewPackages) {
+        if (npmPackageName && !validateNpmPackageName(npmPackageName).validForNewPackages) {
             throw new UserError(`Invalid npm package name "${npmPackageName}"`);
         }
         validatePublisherName(publisher);
@@ -108,6 +108,25 @@ program
 
         process.stdout.write(`\n> Create boilerplate for plugin "${publisher}/${pluginName}":\n\n`);
         createBoilerplate(npmPackageName, publisher, pluginName, jsMode, process.cwd());
+        process.stdout.write("Done.\n");
+    }));
+
+program
+    .command("rename <publisher> <plugin_name> [npm_package_name]")
+    .description("Renames the plugin, by updating all references in the plugin manifest and webpack configuration", {
+        "npm_package_name": "Package name that will be used in the generated package.json. Useful if the plugin will be distributed via npm.",
+        "publisher": "A handle identifying the publisher of the plugin. It should be something unique, like the domain-name of an organization or a user's GitHub handle.",
+        "plugin_name": "The name of the plugin. The CMS will reference the plugin by this name, together with the publisher (e.g. plugin://publisher/plugin_name)."
+    })
+    .action(wrapErrors(async (publisher, pluginName, npmPackageName = "", cmd) => {
+        if (npmPackageName && !validateNpmPackageName(npmPackageName).validForNewPackages) {
+            throw new UserError(`Invalid npm package name "${npmPackageName}"`);
+        }
+        validatePublisherName(publisher);
+        validatePluginName(pluginName);
+
+        process.stdout.write(`\n> Rename target plugin to "${publisher}/${pluginName}":\n\n`);
+        renamePlugin(npmPackageName, publisher, pluginName, process.cwd());
         process.stdout.write("Done.\n");
     }));
 
@@ -136,26 +155,86 @@ function createBoilerplate(
         throw new UserError(`Can't create boilerplate in a non-empty folder.`);
     }
 
+    fs.copySync(path.join(__dirname, "boilerplate", jsMode ? "js" : "ts"), targetPath);
+
+    if (!fs.existsSync(path.join(targetPath, ".gitignore"))) {
+        fs.copySync(
+            path.join(__dirname, "boilerplate", "git", "gitignore.tpl"),
+            path.join(targetPath, ".gitignore")
+        );
+    }
+
+    patchPluginFiles(packageJsonPath, webpackConfigPath, npmPackageName, publisher, pluginName);
+
+    process.stdout.write(`Created boilerplate in working directory.\n`);
+
+    let npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    process.stdout.write(`Running npm install...\n`);
+    child_process.spawnSync(npmCmd, ["install"], { cwd: targetPath, stdio: "inherit" });
+}
+
+async function renamePlugin(
+    /** @type string */ npmPackageName,
+    /** @type string */ publisher,
+    /** @type string */ pluginName,
+    /** @type string */ targetPath
+) {
+    let packageJsonPath = path.join(targetPath, "package.json");
+    let webpackConfigPath = path.join(targetPath, "webpack.config.js");
+
+    if (!fs.existsSync(packageJsonPath) || !fs.existsSync(webpackConfigPath)) {
+        throw new UserError(`Couldn't find a valid plugin in "${targetPath}"`);
+    }
+
+    patchPluginFiles(packageJsonPath, webpackConfigPath, npmPackageName, publisher, pluginName);
+
+    process.stdout.write(`Updated "package.json" and "webpack.config.js".\n`);
+
+    let npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    process.stdout.write(`Running npm install...\n`);
+    child_process.spawnSync(npmCmd, ["install"], { cwd: targetPath, stdio: "inherit" });
+}
+
+async function patchPluginFiles(
+    /** @type string */packageJsonPath,
+    /** @type string */webpackConfigPath,
+    /** @type string */npmPackageName,
+    /** @type string */publisher,
+    /** @type string */pluginName
+) {
+    let packageJson = JSON.parse(fs.readFileSync(packageJsonPath, { encoding: "utf-8" }));
+
+    if (npmPackageName && packageJson.name === void 0) {
+        // Ensure name is added at the top
+        packageJson = { name: npmPackageName, ...packageJson };
+    } else {
+        // if npmPackageName is not set, omit "name" field entirely
+        packageJson.name = npmPackageName || void 0;
+    }
+
+    packageJson.publisher = publisher;
+    packageJson.pluginName = pluginName;
+
+    if (packageJson.author === "<publisher>") {
+        packageJson.author = publisher;
+    }
+
+    fs.writeFileSync(
+        packageJsonPath,
+        JSON.stringify(packageJson, void 0, " ".repeat(2))
+    );
+
     // HACK: this is a copy paste from @alethio/cms package
     let pluginLibraryName = "__" + (publisher + "/" + pluginName)
         .replace(/\./g, "_")
         .replace(/\//g, "__")
         .replace(/-([a-z])/gi, (match, capture) => capture.toUpperCase());
 
-    fs.copySync(path.join(__dirname, "boilerplate", jsMode ? "js" : "ts"), targetPath);
-    fs.writeFileSync(
-        packageJsonPath,
-        fs.readFileSync(packageJsonPath, { encoding: "utf-8"})
-            .replace(/<package_name>/g, npmPackageName)
-            .replace(/<publisher>/g, publisher)
-            .replace(/<plugin_name>/g, pluginName)
-    );
     fs.writeFileSync(
         webpackConfigPath,
         fs.readFileSync(webpackConfigPath, { encoding: "utf-8" })
-            .replace(/<library_name>/g, pluginLibraryName)
+            .replace(/(output:\s+{[\s\S]*library:\s*)"([^"]+)"/g, `$1"${pluginLibraryName}"`)
     );
-
 }
 
 async function installPlugin(
