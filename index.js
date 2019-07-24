@@ -157,6 +157,8 @@ function createBoilerplate(
 
     fs.copySync(path.join(__dirname, "boilerplate", jsMode ? "js" : "ts"), targetPath);
 
+    fs.renameSync(path.join(targetPath, "npmignore.tpl"), path.join(targetPath, ".npmignore"));
+
     if (!fs.existsSync(path.join(targetPath, ".gitignore"))) {
         fs.copySync(
             path.join(__dirname, "boilerplate", "git", "gitignore.tpl"),
