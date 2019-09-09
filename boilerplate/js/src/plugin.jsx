@@ -15,3 +15,5 @@ const plugin = {
 };
 
 export default plugin;
+
+export const manifest = __plugin_manifest__;

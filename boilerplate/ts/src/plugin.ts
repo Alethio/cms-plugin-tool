@@ -18,3 +18,5 @@ const plugin: IPlugin = {
 
 // tslint:disable-next-line:no-default-export
 export default plugin;
+
+export const manifest = __plugin_manifest__;
