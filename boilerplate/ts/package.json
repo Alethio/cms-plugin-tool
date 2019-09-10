@@ -17,6 +17,9 @@
   },
   "author": "<publisher>",
   "license": "UNLICENSED",
+  "engines": {
+    "@alethio/cms": "^1.0.0-beta.7"
+  },
   "devDependencies": {
     "@types/react": "^16.8.12",
     "@types/react-dom": "^16.8.3",
@@ -24,7 +27,7 @@
     "fork-ts-checker-webpack-plugin": "^0.4.15",
     "mobx": "^5.9.4",
     "mobx-react": "^5.4.3",
-    "plugin-api": "npm:@alethio/cms-plugin-api@^1.0.0-beta.1",
+    "plugin-api": "npm:@alethio/cms-plugin-api@^1.0.0-beta.6",
     "react": "^16.8.6",
     "react-dom": "^16.8.6",
     "rimraf": "^2.6.3",
