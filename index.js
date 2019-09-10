@@ -7,6 +7,7 @@ const pacote = require("pacote");
 const validateNpmPackageName = require("validate-npm-package-name");
 const tar = require("tar");
 const commander = require('commander');
+const crypto = require("crypto");
 
 function wrapErrors(/** @type {(...args: any[]) => Promise<any>} */fn) {
     return (...args) => fn(...args).catch(e => {
@@ -384,20 +385,25 @@ async function extractPlugin(
 
     // Resolve plugin name from spec
     process.stdout.write(`Loading plugin manifest...\n`);
-    let { name } = await pacote.manifest(npmPackageSpec, pacoteOpts);
-    if (!name) {
+    let manifest = await pacote.manifest(npmPackageSpec, pacoteOpts);
+    if (!manifest) {
         throw new UserError(`Could not resolve plugin manifest for spec "${npmPackageSpec}"`);
     }
 
+    let packageTmpDirName = manifest.name;
+    if (!packageTmpDirName) {
+        packageTmpDirName = crypto.createHash("md5").update(npmPackageSpec).digest("hex");
+    }
+
     // Extract plugin to a temporary folder
-    let pluginTmpPath = path.join(tmpDir, name.replace(/\//g, path.sep));
+    let pluginTmpPath = path.join(tmpDir, packageTmpDirName.replace(/\//g, path.sep));
     await pacote.extract(npmPackageSpec, pluginTmpPath, pacoteOpts);
 
     return pluginTmpPath;
 }
 
 async function linkPlugin(/** @type string */ targetDir, /** @type string */ pluginPath) {
-    let { name, publisher, distDir, mainJsFilename, pluginName} = readPluginManifest(pluginPath);
+    let { publisher, distDir, mainJsFilename, pluginName} = readPluginManifest(pluginPath);
 
     let mainJsPath = path.join(pluginPath, distDir, mainJsFilename);
     if (!fs.existsSync(mainJsPath)) {
@@ -405,7 +411,7 @@ async function linkPlugin(/** @type string */ targetDir, /** @type string */ plu
     }
 
     if (mainJsFilename !== "index.js") {
-        throw new UserError(`The plugin can only be linked if its main js file is named "index.js" (main js: "${mainJsFilename}", package: ${name}).`);
+        throw new UserError(`The plugin can only be linked if its main js file is named "index.js" (main js: "${mainJsFilename}").`);
     }
 
     let pluginSrcDistPath = path.resolve(pluginPath, distDir);
@@ -430,27 +436,34 @@ function readPluginManifest(/** @type string */ pluginPath) {
 
     /** @type {Object.<string, string>} */
     let { name, publisher, main, pluginName, version, scripts } = fs.readJsonSync(packageJsonPath, { encoding: "utf-8" });
-    if (!publisher) {
-        throw new UserError(`Missing "publisher" field in package.json for plugin "${name}".`);
-    }
-    if (!main) {
-        throw new UserError(`Missing "main" field in package.json for plugin "${name}".`);
-    }
-    if (name.match(/^@/) && !pluginName) {
-        throw new UserError(`Scoped packages must define a custom "pluginName" field in package.json (package: ${name})`);
+
+    if (!pluginName) {
+        if (!name) {
+            throw new UserError(`Plugins without a "name" field must define a "pluginName" field instead in package.json.`);
+        }
+        if (name.match(/^@/)) {
+            throw new UserError(`Scoped packages must define a custom "pluginName" field in package.json.`);
+        }
     }
 
     pluginName = pluginName || name;
     validatePluginName(pluginName);
 
+    if (!publisher) {
+        throw new UserError(`Missing "publisher" field in package.json.`);
+    }
+    if (!main) {
+        throw new UserError(`Missing "main" field in package.json.`);
+    }
+
     // Get js files based on "main" field in package.json and copy them to plugins folder
     /** @type string[] */ let mainMatch = main.match(/(?:(.+)\/)?([^/]+\.js)$/);
     if (!mainMatch) {
-        throw new UserError(`Couldn't resolve plugin main field in package.json for plugin package "${name}".`);
+        throw new UserError(`Couldn't resolve plugin main field in package.json.`);
     }
 
     if (!mainMatch[1]) {
-        throw new UserError(`Couldn't resolve js dir for plugin "${name}". ` +
+        throw new UserError(`Couldn't resolve plugin js bundle dir. ` +
             `"main" field in package.json must point to a package subdirectory containing only the js bundle and its public dependencies`);
     }
 
