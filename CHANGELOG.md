@@ -1,3 +1,8 @@
+# v1.0.0-beta.5
+
+- Fix some errors when working with plugins that don't have a "name" field in package.json
+- Add plugin manifest support at runtime and update plugin boilerplates (@alethio/cms@1.0.0-beta.7)
+
 # v1.0.0-beta.4
 
 - Add uninstall command for easily removing installed plugins
